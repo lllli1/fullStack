@@ -8,32 +8,57 @@ router.post('/',(req,res) =>
 {
     try
     {
+        const body = req.body || {};
+        const keys  = Object.keys(body);
+        const allowdKeys = ['first_name','last_name','email','password'];
+        const OnlyAllowdKeys = keys.length = allowdKeys.length && keys.every(k => allowdKeys.includes(k));
+        if(!OnlyAllowdKeys)
+        {
+            return res
+            .status(400)
+            .json({error_message:"Invalid field"});//字段不合法
+        }
         const {first_name, last_name, email, password} = req.body || {};
         if(!first_name || !last_name || !email || !password)
         {
             return res
             .status(400)
-            .json({error_message: "存在错误信息1"});
+            .json({error_message: "Invalid field"});//字段不合法
         }
-    
-    const sql = `
-        INSERT INTO users (first_name, last_name, email, password)
-        VALUES (?, ?, ?, ?)
-      `;
+        if (password.length < 8 || password.length >= 37) 
+        {
+            return res
+            .status(400)
+            .json({error_message: 'The password length is invalid' });//密码长度不合法
+        }
+        
+        const hasUpper = /[A-Z]/.test(password);
+        const hasLower = /[a-z]/.test(password);
+        const hasDigit = /\d/.test(password);
+        const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+        if (!(hasUpper && hasLower && hasDigit && hasSpecial)) 
+        {
+            return res
+            .status(400)
+            .json({ error_message: 'The password complexity does not meet the requirements.' });//密码复杂度不符合要求
+        }
+    const sql = `INSERT INTO users (first_name, last_name, email, password)
+        VALUES (?, ?, ?, ?)`;
       db.run(sql,[first_name,last_name,email,password], function(err)
       {
         if(err)
         {
             return res
             .status(400)
-            .json({error_message: "存在错误信息2"});
+            .json({error_message: "The email address you entered is duplicated."});//邮箱重复
         }
         return res.status(201).json({user_id:this.lastID});
       });
     }
     catch(e)
     {
-        return res.status(500).json({error_message:'服务器错误'});
+        return res.status(500).json({error_message:'Server Error'});
     }
 });
 //app.use('/users',router);
@@ -48,14 +73,14 @@ app.post('/login',(req,res)=>
         {
             return res
             .status(400)
-            .json({error_message: '登陆存在错误信息0' });
+            .json({error_message: 'The login field is invalid'});//登录字段不合法
         }
         const {email,password} = body;
         if(!email || !password)
         {
             return res
             .status(400)
-            .json({error_message:"登陆存在错误信息1"});
+            .json({error_message:'The login field is invalid'});//登录字段不合法
         }
         const getSql = `SELECT user_id,password,session_token FROM users WHERE email = ?`;
         db.get(getSql,[email],(err,row) => 
@@ -64,14 +89,14 @@ app.post('/login',(req,res)=>
             {
                 return res
                 .status(500)
-                .json({error_message:"服务器错误"});
+                .json({error_message:'Server Error'});
             }
             //密码不对或者没有
             if(!row || row.password !== password)
             {
                 return res
                 .status(400)
-                .json({error_message:"登陆存在错误信息2"});
+                .json({error_message:'The input password is incorrect'});//密码错误
             }
             if (row.session_token) 
             {
@@ -87,7 +112,7 @@ app.post('/login',(req,res)=>
                 {
                     return res
                     .status(500)
-                    .json({error_message:"服务器错误"});
+                    .json({error_message:'Server Error'});
                 }
                 return res.status(200).json({user_id:row.user_id,session_token});
             });
@@ -97,7 +122,7 @@ app.post('/login',(req,res)=>
     {
         return res
         .status(500)
-        .json({error_message:"服务器错误"});
+        .json({error_message:'Server Error'});
     }
 });
 
@@ -112,7 +137,7 @@ app.post('/logout',(req,res)=>
         {
             return res
             .status(401)
-            .json({error_message:"缺少session_token"});
+            .json({error_message:'Miss the session_token'});
         }
         const getSql = `SELECT user_id FROM users WHERE session_token = ?`;
         db.get(getSql,[token],(err,row) =>
@@ -121,13 +146,13 @@ app.post('/logout',(req,res)=>
             {
                 return res
                 .status(500)
-                .json({error_message:"服务器错误"});
+                .json({error_message:'Server Error'});
             }
             if(!row)
             {
                 return res
                 .status(401)
-                .json({error_message:"无效的session_token或未登录"})
+                .json({error_message:'nvalid session_token or not logged in'})//无效的session_token或未登录I
             }
         const clrSql = `UPDATE users SET session_token = NULL WHERE user_id = ?`;
         db.run(clrSql,[row.user_id],function(updErr)
@@ -136,7 +161,7 @@ app.post('/logout',(req,res)=>
             {
                 return res
                 .status(500)
-                .json({error_message:"服务器错误"});
+                .json({error_message:'Server Error'});
          }
             return res.status(200).send();
         });
@@ -146,7 +171,7 @@ app.post('/logout',(req,res)=>
     {
         return res
         .status(500)
-        .json({error_message:"服务器错误"});
+        .json({error_message:'Server Error'});
     }
 });
 app.use('/users',router);

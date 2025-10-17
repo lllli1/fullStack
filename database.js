@@ -94,6 +94,33 @@ let db = new sqlite3.Database(DBSOURCE, (err) => {
             }
         }
     );
+    db.run(`CREATE TABLE categories (
+    category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL
+)`, (err) => {
+    if (err) {
+        console.log('Categories table already created');
+    } else {
+        console.log('Categories table created');
+        // 可选：插入初始类别
+        db.run(`INSERT OR IGNORE INTO categories (name) VALUES 
+            ('会议'), ('研讨会'), ('社交活动'), ('培训'), ('其他')`);
+    }
+});
+
+db.run(`CREATE TABLE event_categories (
+    event_id INTEGER,
+    category_id INTEGER,
+    PRIMARY KEY (event_id, category_id),
+    FOREIGN KEY (event_id) REFERENCES events(event_id),
+    FOREIGN KEY (category_id) REFERENCES categories(category_id)
+)`, (err) => {
+    if (err) {
+        console.log('Event_categories table already created');
+    } else {
+        console.log('Event_categories table created');
+    }
+});
     }
 });
 
