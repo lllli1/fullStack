@@ -121,6 +121,8 @@ db.run(`CREATE TABLE event_categories (
         console.log('Event_categories table created');
     }
 });
+db.run(`INSERT OR IGNORE INTO categories (name) VALUES 
+    ('会议'), ('研讨会'), ('社交活动'), ('培训'), ('体育'), ('文化'), ('其他')`);
     }
 });
 

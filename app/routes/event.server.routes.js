@@ -6,6 +6,14 @@ const { request } = require('chai');
 const BadWordsNext = require('bad-words-next');
 const en = require('bad-words-next/lib/en');  // 英文字典；如需中文，用 'bad-words-next/lib/ch'
 const badwords = new BadWordsNext({ data: en });  // 创建实例，可加 { exclusions: ['专业词1'] } 排除
+// 工具函数：将脏话替换为等长的 *
+function censorText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .split(/\b/)
+    .map(tok => (badwords.check(tok) ? '*'.repeat([...tok].length) : tok))
+    .join('');
+}
 
 
 function getAuthToken(req) 
@@ -169,6 +177,10 @@ if (typeof name !== 'string' || name.trim() === '' ||
 if (badwords.check(name) || badwords.check(description)) {  // 可选：也检查 location
             return res.status(400).json({ error_message: 'Content contains offensive language脏话' });
         }*/
+const cleanName = censorText(name.trim());
+const cleanDesc = censorText(description.trim());
+//const cleanLoc  = censorText(location.trim());
+
     //数值检验
     if(!Number.isInteger(start) || start < 0 
     ||!Number.isInteger(close_registration) || close_registration < 0
@@ -193,7 +205,7 @@ if (badwords.check(name) || badwords.check(description)) {  // 可选：也检�
       }
       
     const sql ='INSERT INTO events (name, description, location, start_date, close_registration, max_attendees, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
-    db.run(sql,[name,description,location,start,close_registration,max_attendees,user.user_id],function (err) 
+    db.run(sql,[cleanName,cleanDesc,location,start,close_registration,max_attendees,user.user_id],function (err) 
     {
     if (err) 
     {

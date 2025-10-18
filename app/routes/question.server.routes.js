@@ -1,6 +1,17 @@
 const db = require('../../database');
 const express = require('express');
 
+const BadWordsNext = require('bad-words-next');
+const en = require('bad-words-next/lib/en');  // 英文字典；如需中文，用 'bad-words-next/lib/ch'
+const badwords = new BadWordsNext({ data: en });  // 创建实例，可加 { exclusions: ['专业词1'] } 排除
+// 工具函数：将脏话替换为等长的 *
+function censorText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .split(/\b/)
+    .map(tok => (badwords.check(tok) ? '*'.repeat([...tok].length) : tok))
+    .join('');
+}
 function loadUserByToken(token) {
   return new Promise((resolve, reject) => {
     db.get(
@@ -17,11 +28,12 @@ module.exports = function (app) {
   router.post('/event/:event_id/question', async (req, res) => {
     try {
       const eventIDStr = req.params.event_id;
+      const body = req.body || {};
       const questionText = (req.body && req.body.question || '').trim();
       const token = req.header('X-Authorization') || '';
 
       const allowedKeys = ['question'];
-      const extraKeys = Object.keys(req.body).filter(k => !allowedKeys.includes(k));
+      const extraKeys = Object.keys(body).filter(k => !allowedKeys.includes(k));
       if (extraKeys.length > 0) 
       {
         return res.status(400).json({ error_message: 'Extra field(s) present' });
@@ -70,10 +82,10 @@ module.exports = function (app) {
               .status(403)
               .json({ error_message: '只能提问已参加的活动' });
           }
-
+          const cleanQuestion = censorText(questionText);
           const sqlInsert =
             'INSERT INTO questions (question, asked_by, event_id, votes) VALUES (?, ?, ?, 0)';
-          db.run(sqlInsert, [questionText, userID, eventID], function (errInsert) {
+          db.run(sqlInsert, [cleanQuestion, userID, eventID], function (errInsert) {
             if (errInsert) {
               console.error(errInsert);
               return res.status(500).send();
