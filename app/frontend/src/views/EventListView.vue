@@ -1,80 +1,114 @@
 <template>
-  <div class="event-list-container">
-    <h2>事件列表</h2>
-    <el-form inline>
-      <el-form-item>
-        <el-input v-model="search.q" placeholder="搜索事件名" clearable />
-      </el-form-item>
-      <el-form-item>
-        <el-select v-model="search.status" placeholder="状态" clearable>
-          <el-option label="我的事件" value="MY_EVENTS" />
-          <el-option label="参加的事件" value="ATTENDING" />
-          <el-option label="开放事件" value="OPEN" />
-          <el-option label="归档事件" value="ARCHIVE" />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="fetchEvents">搜索</el-button>
-      </el-form-item>
-    </el-form>
-    <el-table :data="events" stripe>
-      <el-table-column prop="name" label="名称" />
-      <el-table-column prop="location" label="地点" />
-      <el-table-column prop="start" label="开始时间" :formatter="formatTime" />
-      <el-table-column label="操作">
-        <template #default="scope">
-          <router-link :to="`/event/${scope.row.event_id}`">详情</router-link>
-          <router-link
-            v-if="scope.row.creator.creator_id === authStore.user?.id"
-            :to="`/event/${scope.row.event_id}/edit`"
-            style="margin-left: 10px"
-          >
-            编辑
+  <div class="p-4 max-w-5xl mx-auto">
+    <h1 class="text-2xl font-bold mb-4">活动列表</h1>
+
+    <!-- 筛选区 -->
+    <div class="flex flex-wrap gap-3 items-center mb-4">
+      <input v-model="q" class="border rounded p-2 flex-1 min-w-[220px]" placeholder="按名称搜索…" />
+
+      <select v-model="status" class="border rounded p-2">
+        <option value="">全部状态</option>
+        <option value="OPEN">开放中</option>
+        <option value="MY_EVENTS">我创建的</option>
+        <option value="ATTENDING">我报名的</option>
+        <option value="ARCHIVE">已归档</option>
+      </select>
+
+      <!-- 类别筛选 -->
+      <select v-model="categoryId" class="border rounded p-2">
+        <option :value="null">全部类别</option>
+        <option v-for="c in categoriesAll" :key="c.category_id" :value="c.category_id">
+          {{ c.name }}
+        </option>
+      </select>
+
+      <button @click="runSearch" class="px-3 py-2 rounded bg-blue-600 text-white">搜索</button>
+    </div>
+
+    <!-- 列表 -->
+    <ul>
+      <li v-for="e in events" :key="e.event_id" class="border-b py-3">
+        <div class="flex items-center justify-between">
+          <router-link :to="`/event/${e.event_id}`" class="font-medium hover:underline">
+            {{ e.name }}
           </router-link>
-        </template>
-      </el-table-column>
-    </el-table>
-    <el-pagination
-      v-model:current-page="page"
-      :page-size="search.limit"
-      layout="prev, pager, next"
-      :total="total"
-      @current-change="fetchEvents"
-      class="pagination"
-    />
+          <div class="text-xs text-gray-500">{{ ts(e.start) }}</div>
+        </div>
+        <div class="text-sm text-gray-600">{{ e.location }}</div>
+        <!-- 注意：/search 不返回 categories，别在列表上显示类别；详情页展示 -->
+      </li>
+    </ul>
+
+    <!-- 翻页（可选） -->
+    <div class="mt-4 flex items-center gap-2">
+      <button class="px-3 py-2 border rounded" :disabled="offset === 0" @click="prev">上一页</button>
+      <button class="px-3 py-2 border rounded" :disabled="events.length < limit" @click="next">下一页</button>
+      <span class="text-sm text-gray-500">每页 {{ limit }} 条</span>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue';
-import { useAuthStore } from '../stores/auth';
-import api from '../utils/api';
-import dayjs from 'dayjs';
-import { ElMessage } from 'element-plus';
+import { ref, onMounted } from 'vue';
+import axios from 'axios';
 
-const authStore = useAuthStore();
+const BASE = 'http://localhost:3333';
+const token = localStorage.getItem('session_token') || '';
+const headers = token ? { 'X-Authorization': token } : {};
+
+const q = ref('');
+const status = ref('');
+const categoryId = ref(null); // number | null
+const categoriesAll = ref([]);
+
+const limit = ref(20);
+const offset = ref(0);
 const events = ref([]);
-const total = ref(0);
-const page = ref(1);
-const search = reactive({ q: '', status: '', limit: 20, offset: 0 });
 
-const fetchEvents = async () => {
-  try {
-    search.offset = (page.value - 1) * search.limit;
-    const params = { ...search };
-    const res = await api.get('/search', { params });
-    events.value = res.data.events || res.data;
-    total.value = res.data.total || 0;
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error_message || '获取事件失败');
+onMounted(async () => {
+  // 拉类别
+  const { data } = await axios.get(`${BASE}/categories`);
+  categoriesAll.value = Array.isArray(data) ? data : [];
+  await runSearch();
+});
+
+async function runSearch() {
+  const params = { limit: limit.value, offset: offset.value };
+  if (q.value) params.q = q.value;
+  if (status.value) params.status = status.value;
+
+  // 仅在选择具体数字 id 时才加上 category，避免传 'undefined'
+  if (typeof categoryId.value === 'number') {
+    params.category = categoryId.value;
   }
-};
 
-const formatTime = (row) => dayjs.unix(row.start).format('YYYY-MM-DD HH:mm');
+  try {
+    const { data } = await axios.get(`${BASE}/search`, { params, headers });
+    events.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error(e);
+    alert('搜索失败');
+  }
+}
 
-fetchEvents();
+function next() {
+  offset.value += limit.value;
+  runSearch();
+}
+function prev() {
+  offset.value = Math.max(0, offset.value - limit.value);
+  runSearch();
+}
+
+function ts(sec) {
+  if (!sec) return '-';
+  try {
+    return new Date(sec * 1000).toLocaleString();
+  } catch {
+    return '-';
+  }
+}
 </script>
-
 <style scoped>
 .event-list-container {
   max-width: 1200px;

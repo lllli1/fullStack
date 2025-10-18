@@ -7,6 +7,26 @@
     <p><strong>报名截止:</strong> {{ formatTime(event.close_registration) }}</p>
     <p><strong>最大参与者:</strong> {{ event.max_attendees }}</p>
     <p><strong>当前参与:</strong> {{ event.number_attending }}</p>
+
+    <!-- === 新增：类别展示（仅展示，不改动任何逻辑） === -->
+    <div style="margin: 16px 0;">
+      <h3 style="margin-bottom: 8px;">类别</h3>
+      <div v-if="event.categories && event.categories.length">
+        <!-- 后端可能返回 { category_id: null, name: 'Undefined' }，这里仅做显示，不改数据 -->
+        <el-tag
+          v-for="c in event.categories"
+          :key="(c.category_id ?? 'undef') + '-' + c.name"
+          size="small"
+          type="info"
+          style="margin-right: 8px; margin-bottom: 8px;"
+        >
+          {{ c.name === 'Undefined' ? '未分类' : c.name }}
+        </el-tag>
+      </div>
+      <div v-else class="text-gray-500">未分类</div>
+    </div>
+    <!-- === 新增结束 === -->
+
     <el-button v-if="canJoin" type="primary" @click="joinEvent">参加</el-button>
     <el-button v-if="isCreator" type="danger" @click="deleteEvent">删除</el-button>
     <router-link v-if="isCreator" :to="`/event/${event.event_id}/edit`" style="margin-left: 10px">
@@ -65,6 +85,7 @@ const authStore = useAuthStore();
 const event = ref(null);
 const newQuestion = ref('');
 
+// 保持原有逻辑：创建者判定、能否参加
 const isCreator = computed(() => event.value?.creator.creator_id === authStore.user?.id);
 const canJoin = computed(() => !isCreator.value);
 
