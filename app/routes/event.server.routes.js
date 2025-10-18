@@ -16,6 +16,65 @@ function censorText(text) {
 }
 
 
+
+
+async function listEventCategories(event_id) {
+  return new Promise((resolve, reject) => {
+    db.all(`
+      SELECT c.category_id, c.name
+      FROM categories c
+      JOIN event_categories ec ON ec.category_id = c.category_id
+      WHERE ec.event_id = ?
+      ORDER BY c.name ASC
+    `, [event_id], (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+async function validateCategories(categories) {
+  if (!Array.isArray(categories) || categories.length === 0) return true; // 允许空数组（未定义）
+  const uniqueIds = [...new Set(categories.filter(id => Number.isInteger(id) && id > 0))];
+  if (uniqueIds.length !== categories.length) return false; // 重复或无效 ID
+  return new Promise((resolve, reject) => {
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    db.all(`SELECT category_id FROM categories WHERE category_id IN (${placeholders})`, uniqueIds, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows.length === uniqueIds.length);
+    });
+  });
+}
+
+async function updateEventCategories(event_id, categories) {
+  return new Promise((resolve, reject) => {
+    db.run('DELETE FROM event_categories WHERE event_id = ?', [event_id], async (delErr) => {
+      if (delErr) return reject(delErr);
+      if (!categories || categories.length === 0) return resolve(); // 未定义，不插入
+      const stmt = db.prepare('INSERT INTO event_categories (event_id, category_id) VALUES (?, ?)');
+      try {
+        for (const catId of categories) {
+          stmt.run([event_id, catId]);
+        }
+        stmt.finalize();
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+
+
+
+
+
+
+
+
+
+
 function getAuthToken(req) 
 {
   return req.header('X-Authorization') || null;
@@ -123,109 +182,96 @@ module.exports = function (app)
     res.app.set('json spaces', 2);
     next();
   });
-  router.post('/events', async (req, res) => 
-    {
-    try 
-    {
-      const token = getAuthToken(req);
-      if(!token) 
-      {
-        return res
-        .status(401)
-        .send();
-      }
-      const user = await loadUserByToken(token);
-      if (!user)
-      {
-        return res
-        .status(401)
-        .send();
-      }
-    const {name,description,location} = req.body || {};
-    let  { start, close_registration, max_attendees } = req.body || {}; 
-    const startVal = (req.body || {}).start;
-    const close_registrationVal = (req.body || {}).close_registration;
-    const max_attendeesVal = (req.body || {}).max_attendees;
+ router.post('/events', async (req, res) => {
+  try {
+    const token = getAuthToken(req);
+    if (!token) {
+      return res.status(401).send();
+    }
+    const user = await loadUserByToken(token);
+    if (!user) {
+      return res.status(401).send();
+    }
 
-    start = Number(start);
-    close_registration = Number(close_registration);
-    max_attendees = Number(max_attendees);
+    const { name, description, location, start, close_registration, max_attendees, categories } = req.body || {};
+    const startVal = req.body?.start;
+    const close_registrationVal = req.body?.close_registration;
+    const max_attendeesVal = req.body?.max_attendees;
 
-    const allowedKeys = ['name','description','location','start','close_registration','max_attendees'];
+    // 检查额外字段
+    const allowedKeys = ['name', 'description', 'location', 'start', 'close_registration', 'max_attendees', 'categories'];
     const extraKeys = Object.keys(req.body || {}).filter(k => !allowedKeys.includes(k));
-    if(extraKeys.length > 0)
-    {
-      return res
-      .status(400)
-      .json({error_message:'Relevant error message goes in here字段'});
+    if (extraKeys.length > 0) {
+      return res.status(400).json({ error_message: '无效字段' });
     }
 
-
-
-
-if (typeof name !== 'string' || name.trim() === '' ||
-  typeof description !== 'string' || description.trim() === '' ||
-  typeof location !== 'string' || location.trim() === '' ||
-  startVal === '' || close_registrationVal === '' || max_attendeesVal === '' ||
-  startVal == null || close_registrationVal == null || max_attendeesVal == null) 
-{
-  return res
-  .status(400)
-  .json({ error_message: 'Relevant error message goes in here必填' });
-}
-/*
-if (badwords.check(name) || badwords.check(description)) {  // 可选：也检查 location
-            return res.status(400).json({ error_message: 'Content contains offensive language脏话' });
-        }*/
-const cleanName = censorText(name.trim());
-const cleanDesc = censorText(description.trim());
-//const cleanLoc  = censorText(location.trim());
-
-    //数值检验
-    if(!Number.isInteger(start) || start < 0 
-    ||!Number.isInteger(close_registration) || close_registration < 0
-    ||!Number.isInteger(max_attendees) || max_attendees <= 0) 
-    {
-        return res
-        .status(400)
-        .json({ error_message: 'Relevant error message goes in here类型' });
+    // 验证必填字段
+    if (
+      typeof name !== 'string' || name.trim() === '' ||
+      typeof description !== 'string' || description.trim() === '' ||
+      typeof location !== 'string' || location.trim() === '' ||
+      startVal === '' || close_registrationVal === '' || max_attendeesVal === '' ||
+      startVal == null || close_registrationVal == null || max_attendeesVal == null
+    ) {
+      return res.status(400).json({ error_message: '必填字段缺失或为空' });
     }
+
+    // 清理文本
+    const cleanName = censorText(name.trim());
+    const cleanDesc = censorText(description.trim());
+    const cleanLoc = censorText(location.trim());
+
+    // 数值验证
+    const startNum = Number(start);
+    const closeRegNum = Number(close_registration);
+    const maxAttendeesNum = Number(max_attendees);
+    if (
+      !Number.isInteger(startNum) || startNum < 0 ||
+      !Number.isInteger(closeRegNum) || closeRegNum < 0 ||
+      !Number.isInteger(maxAttendeesNum) || maxAttendeesNum <= 0
+    ) {
+      return res.status(400).json({ error_message: '字段类型无效' });
+    }
+
     const now = timeTransfer();
-    if(start <= now) 
-    {
-        return res
-        .status(400)
-        .json({ error_message: 'Relevant error message goes in here时间' });
+    if (startNum <= now) {
+      return res.status(400).json({ error_message: '开始时间不能早于当前时间' });
     }
-    if(!(close_registration <= start)) 
-    {
-        return res
-        .status(400)
-        .json({ error_message: 'Relevant error message goes in here报名时间' });
-      }
-      
-    const sql ='INSERT INTO events (name, description, location, start_date, close_registration, max_attendees, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?)';
-    db.run(sql,[cleanName,cleanDesc,location,start,close_registration,max_attendees,user.user_id],function (err) 
-    {
-    if (err) 
-    {
-        console.log('[DEBUG SQL Error]', err);
-        return res
-        .status(500)
-        .send(111);
+    if (closeRegNum > startNum) {
+      return res.status(400).json({ error_message: '报名截止时间不能晚于开始时间' });
     }
-    return res.status(201).json({event_id: this.lastID });
+
+    // 验证类别
+    if (categories !== undefined && !await validateCategories(categories)) {
+      return res.status(400).json({ error_message: '无效类别' });
     }
-      );
-    } 
-    catch (e) 
-    {
-      console.log('[DEBUG SQL Error(catch)]', e);
-      return res
-      .status(500)
-      .send();
+
+    // 插入事件到数据库
+    const sql = `
+      INSERT INTO events (name, description, location, start_date, close_registration, max_attendees, creator_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    const event_id = await new Promise((resolve, reject) => {
+      db.run(sql, [cleanName, cleanDesc, cleanLoc, startNum, closeRegNum, maxAttendeesNum, user.user_id], function (err) {
+        if (err) {
+          console.error('[DEBUG SQL Error]', err);
+          return reject(err);
+        }
+        resolve(this.lastID);
+      });
+    });
+
+    // 更新类别关联
+    if (categories && categories.length > 0) {
+      await updateEventCategories(event_id, categories);
     }
-  });
+
+    return res.status(201).json({ event_id });
+  } catch (e) {
+    console.error('[POST /events] error:', e);
+    return res.status(500).send();
+  }
+});
 
   router.get('/event/:event_id',async(req,res) =>
   {
@@ -254,6 +300,7 @@ const cleanDesc = censorText(description.trim());
         attendees = await listMembers(eventID);
       }
       const questions = await listQuestionsDetails(eventID);
+      const categories = await listEventCategories(eventID);
       return res
       .status(200)
       .json(
@@ -275,7 +322,8 @@ const cleanDesc = censorText(description.trim());
         max_attendees:ev.max_attendees,
         number_attending: number_member,
         ...(attendees ? {attendees}:{}),
-        questions: questions
+        questions: questions,
+        categories: categories.length > 0 ? categories : [{ category_id: null, name: 'Undefined' }]
       });
     }
     catch(e)
@@ -447,14 +495,14 @@ router.patch('/event/:event_id', async (req, res) => {
       return res.status(403).json({ error_message: "You can only update your own events" });
 
     // === 检查是否有多余字段 ===
-    const allowedKeys = ['name', 'description', 'location', 'start', 'close_registration', 'max_attendees'];
+    const allowedKeys = ['name', 'description', 'location', 'start', 'close_registration', 'max_attendees','categories'];
     const extraKeys = Object.keys(req.body || {}).filter(k => !allowedKeys.includes(k));
     if (extraKeys.length > 0) {
       return res.status(400).json({ error_message: 'Invalid field(s) in request body' });
     }
 
     // === 取出字段并进行类型转换 ===
-    let { name, description, location, start, close_registration, max_attendees } = req.body;
+    let { name, description, location, start, close_registration, max_attendees,categories} = req.body;
     if (start !== undefined) start = Number(start);
     if (close_registration !== undefined) close_registration = Number(close_registration);
     if (max_attendees !== undefined) max_attendees = Number(max_attendees);
@@ -524,6 +572,15 @@ router.patch('/event/:event_id', async (req, res) => {
       fieldsToUpdate.max_attendees = max_attendees;
     }
 
+
+    if (categories !== undefined) {
+      if (!await validateCategories(categories)) {
+        return res.status(400).json({ error_message: 'Invalid categories' });
+      }
+      await updateEventCategories(eventID, categories);
+    }
+
+
     // === 没有任何可更新字段 ===
     if (Object.keys(fieldsToUpdate).length === 0)
       return res.status(200).send();
@@ -557,7 +614,7 @@ app.get('/search',async(req,res) =>
     const status = req.query.status || null;
     const limit = parseInt(req.query.limit,10) || 20
     const offset = parseInt(req.query.offset,10) || 0;
-
+    const category = req.query.category || null;
     if(limit < 1 || limit > 100 || offset < 0)
     {
       return res
@@ -591,6 +648,37 @@ app.get('/search',async(req,res) =>
       sql += ' AND e.name LIKE ?';;
       params.push(`%${q}%`);
     }
+
+    if(category)
+    {
+      if(category === 'undefined')
+      {
+        sql += ' AND NOT EXISTS (SELECT 1 FROM event_categories ec WHERE ec.veent_id AND ec.category_id = ?)';
+      }
+      else
+      {
+        const catID = Number(category);
+        if(Number.isInteger(catID) || catID > 0)
+        {
+          sql += ' AND EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = e.event_id AND ec.category_id = ?)'
+          params.push(catID);
+        }
+        else
+        {
+          return res
+          .status(400)
+          .json({error_message:"category不符合要求"});
+        }
+      }
+    }
+
+
+
+
+
+
+
+
     const now = Math.floor(Date.now()/1000);
 
     if(status === 'MY_EVENTS')
@@ -641,7 +729,8 @@ app.get('/search',async(req,res) =>
     location:row.location,
     start:row.start_date,
     close_registration:row.close_registration,
-    max_attendees:row.max_attendees
+    max_attendees:row.max_attendees,
+    category:row.category
   }));
   return res.status(200).json(events);
   } 
@@ -654,6 +743,21 @@ app.get('/search',async(req,res) =>
   }
 });
 
+/// 获取类别列表的端点
+router.get('/categories', async (req, res) => {
+  try {
+    const categories = await new Promise((resolve, reject) => {
+      db.all('SELECT category_id, name FROM categories ORDER BY name ASC', (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      });
+    });
+    return res.status(200).json(categories);
+  } catch (e) {
+    console.error('[GET /categories] error:', e);
+    return res.status(500).send();
+  }
+});
 
 
   app.use('/', router);
